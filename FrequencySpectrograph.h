@@ -18,10 +18,14 @@ using namespace std;
 
 class FrequencySpectrograph {
 public:
-    void createGraph(double *d, int n, int wn, int ws, string filename, int fs);
-    double *getFrequencyResult(fftw_complex *r) const;
+    void createGraph(double *d, int n, int windowWidth, int windowStep, const string &filename, int sampleRate, int imgHeight);
+    double *getFrequencyResponse(fftw_complex *r) const;
+
+    static fftw_complex *FFT(double *sig, uint n, uint sr);
+    static double *IFFT(fftw_complex *freq, uint n, uint sr);
 private:
-    void appendOutToResult(double *o);
+    void appendOutToResult(double *o, int at);
+    void putTimeMarks(cv::Mat &img, double msppx, double vppx);
 
     int resultLen;
     cv::Mat *result;

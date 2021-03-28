@@ -53,17 +53,21 @@ void DSP::plot(const string &filename, uint imgWidth, double plim, double nlim, 
     int readStart=0;
     if(plim==0 && nlim==0){
         findMinMax(&sigA[start], len, &nlim, &plim);
+        cout << "Max: " << plim << endl;
+        cout << "Min: " << nlim << endl;
     }
+
+    double a= (double)(IMG_H-1)/(nlim-plim);
+    double b= -plim*a;
 
     for(int i=0; i<imgsN; i++){
         cv::Mat *img= new cv::Mat(IMG_H, imgWidth, CV_8UC3, cv::Scalar(242, 248, 250));
-        double a= (double)(IMG_H-1)/(nlim-plim);
-        double b= -plim*a;
         int ypix;
 
-        DSP::plotDrawAxis(img, DSP_PLOT_AXIS_X, b);
+        if(b<IMG_H)
+            DSP::plotDrawAxis(img, DSP_PLOT_AXIS_X, b);
         if(drawGrid)
-            DSP::plotDrawGrid(img, b, 1000/getSampleRate(), sigT[readStart]);
+            DSP::plotDrawGrid(img, b, 1000/getSampleRate(), sigT[readStart], nlim, plim);
 
         UI::progressBarShow((double)i/imgsN, 50);
 
@@ -83,7 +87,7 @@ void DSP::plot(const string &filename, uint imgWidth, double plim, double nlim, 
 
         readStart+= imgWidth;
 
-        cv::imwrite(filename+"_"+to_string(i)+".png", *img);
+        cv::imwrite("imgs/"+filename+"_"+to_string(i)+".png", *img);
         delete img;
     }
 
@@ -91,8 +95,127 @@ void DSP::plot(const string &filename, uint imgWidth, double plim, double nlim, 
     cout << endl;
 }
 
-void DSP::applyEMAFilter(double alpha, int windowN) {
-    EMAFilter(&sigA[0], sigA.size(), windowN, alpha);
+void DSP::applyEMAFilter(int windowN) {
+    int N;
+
+    UI::progressBarShow(0.0, 50);
+    for(int i=1; i<sigA.size(); i++){
+        double alpha= (2.0/(N+1));
+
+        sigA[i]= (sigA[i] - sigA[i-1])*alpha + sigA[i-1];
+        UI::progressBarShow((double)i/sigA.size(), 50);
+    }
+
+    UI::progressBarShow(1.0, 50);
+    cout << endl;
+}
+
+void DSP::applyFIRFilter(double *ir, uint size) {
+    UI::progressBarShow(0, 50);
+    for(int j=sigA.size()-1; j>=size-1; j--) {
+        uint s= j-size+1;
+        double output = 0;
+
+        for (int i = 0; i < size; i++) {
+            output+= sigA[s+i]*ir[i];
+        }
+
+        sigA[s+size]= output;
+        UI::progressBarShow((double)j/sigA.size(), 50);
+    }
+
+    UI::progressBarShow(1, 50);
+}
+
+void DSP::drawSpectrograph(const string &name, int wn, int ws) {
+    UI::progressBarShow(0, 50);
+    fs.createGraph(&sigA[0], sigA.size(), wn, ws, name, getSampleRate(), 1448);
+    UI::progressBarShow(1, 50);
+}
+
+void DSP::integral() {
+    double sum= 0;
+    double changed= sigA[0];
+    sigA[0]= 0;
+    int t= 0;
+
+    for(int i=1; i<sigA.size(); i++){
+        sum+= (0.5*((sigT[i]-sigT[i-1]) * (sigA[i]+changed)));
+        //t+= (sigT[i]-sigT[i-1]);
+        //cout << t << "," << sigA[i] << "," << (0.5*((sigT[i]-sigT[i-1]) * (sigA[i]+changed))) << endl;
+
+        changed= sigA[i];
+        sigA[i]= sum;
+        UI::progressBarShow((double)i/sigA.size(), 50);
+    }
+
+    UI::progressBarShow(1.0, 50);
+}
+
+double DSP::definiteIntegral(uint s, uint e, double C) {
+    double sum= C;
+
+    for(uint i=s+1; i<e; i++){
+        sum+= (0.5*((sigT[i]-sigT[i-1]) * (sigA[i]+sigA[i-1])));
+        UI::progressBarShow((double)i/sigA.size(), 50);
+    }
+
+    return sum;
+}
+
+double DSP::sum(uint s, uint e) {
+    double sum= 0;
+
+    for(int i=s; i<e; i++)
+        sum+= sigA[i];
+
+    return sum;
+}
+
+void DSP::removeConstantComponent(uint type, double e) {
+    double avg=1;
+    while(abs(avg)>e) {
+        UI::progressBarShow(0.0, 50);
+        double sum;
+        sum= definiteIntegral(0, sigA.size(), 0.0);
+
+        avg = sum / (sigA.size() * 2);
+
+        for (int i = 0; i < sigA.size(); i++) {
+            sigA[i] -= avg;
+        }
+
+        UI::progressBarShow(1.0, 50);
+        cout << endl;
+        cout << "Signal definiteIntegral <" << 0 << ", " << sigA.size() << "> : " << sum << endl;
+        cout << "Signal const component: " << avg << endl << endl;
+    }
+}
+
+void DSP::steppingRemoveConstantComponent(uint maxwn) {
+    uint windowSize= sigA.size();
+    uint partsNo=1;
+
+    uint s, e;
+
+    while(windowSize>maxwn){
+        s= 0;
+        e= windowSize;
+
+        for(int i=0; i<partsNo; i++){
+            double cc= sum(s, e)/windowSize;
+
+            for(int j=s; j<e; j++){
+                sigA[j]-= cc;
+            }
+
+            s= e;
+            e+= windowSize;
+        }
+
+        partsNo*= 2;
+        windowSize= sigA.size()/partsNo;
+    }
 }
 
 uint DSP::getT(int at) {
@@ -110,34 +233,9 @@ uint DSP::getA(int at) {
 }
 
 double DSP::getSampleRate() {
-    return 1000.0/(sigT[1]-sigT[0]);
+    return 1000.0/(sigT[10]-sigT[9]);
 }
 
-
-double DSP::EMA(const double *d, int n, double alpha) {
-    double ema= d[n-1];
-
-    if(n>1) {
-        for (int i = n - 2; i >= 0; i--) {
-            ema = alpha * d[i] + (1 - alpha) * ema;
-        }
-    }
-
-    return ema;
-}
-
-void DSP::EMAFilter(double *d, int size, int n, double alpha) {
-    int N;
-
-    for(int i=0; i<size; i++){
-        if((i+1)<n)
-            N= (i+1);
-        else
-            N= n;
-
-        d[i]= EMA(&d[i], N, alpha);
-    }
-}
 
 std::vector<std::string> DSP::explode(const string &s, char delim) {
     std::vector<std::string> result;
@@ -202,7 +300,7 @@ void DSP::plotDrawAxis(cv::Mat *img, int axis, int yzero) {
     }
 }
 
-void DSP::plotDrawGrid(cv::Mat *img, int yzero, int msppx, int tstart) {
+void DSP::plotDrawGrid(cv::Mat *img, int yzero, int msppx, int tstart, double min, double max) {
     int lastTDraw;
     int at=100;
 
@@ -239,7 +337,30 @@ void DSP::plotDrawGrid(cv::Mat *img, int yzero, int msppx, int tstart) {
     }
 
     //Draw positive horizontal lines
+    at= yzero-100;
+    sprintf(buf, "%.10f", max);
+    cv::putText(*img, buf, cv::Point(5, 15),
+                cv::FONT_HERSHEY_COMPLEX_SMALL,
+                0.9,
+                textColor);
+    while(at>=0) {
+        cv::line(*img,
+                 cv::Point(0,at),
+                 cv::Point(img->cols-1, at),
+                 lineColor,
+                 1);
+        at-=100;
+
+
+    }
+
+    //Draw negative horizontal lines
     at= yzero+100;
+    sprintf(buf, "%.10f", min);
+    cv::putText(*img, buf, cv::Point(5, img->rows-15),
+                cv::FONT_HERSHEY_COMPLEX_SMALL,
+                0.9,
+                textColor);
     while(at<img->rows) {
         cv::line(*img,
                  cv::Point(0,at),
@@ -248,15 +369,68 @@ void DSP::plotDrawGrid(cv::Mat *img, int yzero, int msppx, int tstart) {
                  1);
         at+=100;
     }
+}
 
-    //Draw negative horizontal lines
-    at= yzero-100;
-    while(at>=0) {
-        cv::line(*img,
-                 cv::Point(0,at),
-                 cv::Point(img->cols-1, at),
-                 lineColor,
-                 1);
-        at-=100;
+
+double DSP::getMaxMinDifference() {
+    double min;
+    double max;
+
+    findMinMax(&sigA[0], sigA.size(), &min, &max);
+
+    return max-min;
+}
+
+vector<double> *DSP::getSigA(){
+    return &sigA;
+}
+
+void DSP::setSigA(double *s) {
+    for(int i=0; i<sigA.size(); i++){
+        sigA[i]= s[i];
     }
+}
+
+void DSP::applyButterworthFilter(int order, double f0, double dcGain, uint type) {
+    uint N= sigA.size();
+
+    fftw_complex *freqOut= FrequencySpectrograph::FFT(&sigA[0], N, getSampleRate());
+
+    double binWidth= getSampleRate()/N;
+    double ratio;
+    double binFreq;
+    double gain;
+    uint numBins= N/2;
+
+    for(int i=1; i<numBins; i++) {
+        binFreq = binWidth * i;
+
+        if(type==DSP_HPF)
+            ratio= f0/binFreq;
+        else
+            ratio= binFreq / f0;
+
+        gain = dcGain / (sqrt((1 + pow(ratio, 2.0 * order))));
+        freqOut[i][0] *= gain;
+        freqOut[i][1] *= gain;
+        freqOut[N - i][0] *= gain;
+        freqOut[N - i][1] *= gain;
+    }
+
+    double *r= FrequencySpectrograph::IFFT(freqOut, N, getSampleRate());
+
+    for(int i=0; i<N; i++){
+        sigA[i]= r[i]/sigA.size();
+    }
+
+    fftw_free(freqOut);
+    fftw_free(r);
+}
+
+int DSP::getSigLength() {
+    return sigT.size();
+}
+
+double DSP::getSigLengthInSec() {
+    return (sigT.size()*(1000.0/getSampleRate()))/1000.0;
 }

@@ -20,23 +20,39 @@
 #define DSP_PLOT_AXIS_Y 1
 #define DSP_PLOT_LIMIT_FIT  0
 
+#define DSP_REMOVECC_AVG        0
+#define DSP_REMOVECC_INTEGRAL   1
+
+#define DSP_LPF                 0
+#define DSP_HPF                 1
 using namespace std;
 
 class DSP {
 public:
     int loadDataFromCSV(const string &filename, int timeAt, int amplitudeAt);
     void plot(const string &filename, uint imgWidth=4096, double plim=0, double nlim=0, uint start=0, uint len=-1, bool drawGrid=false);
-    void applyEMAFilter(double alpha, int windowN);
+    void applyEMAFilter(int windowN);
+    void applyButterworthFilter(int order, double f0, double dcGain, uint type);
+    void applyFIRFilter(double *ir, uint size);
+    void drawSpectrograph(const string &name, int wn, int ws);
+    void integral();
+    double sum(uint s, uint e);
+    double definiteIntegral(uint s, uint e, double C=0);
+    void removeConstantComponent(uint type, double e=0.00000000000001);
+    void steppingRemoveConstantComponent(uint maxwn);
+    double getMaxMinDifference();
+    int getSigLength();
+    double getSigLengthInSec();
 
     uint getT(int at);
     uint getA(int at);
-    double getSampleRate();
 
-    static double EMA(const double *d, int n, double alpha);
-    static void EMAFilter(double *d, int size, int n, double alpha);
+    vector<double> *getSigA();
+    void setSigA(double *s);
+
+    double getSampleRate();
 private:
     vector<uint> sigT;
-    vector<double> orgSigA;
     vector<double> sigA;
 
     FrequencySpectrograph fs;
@@ -46,7 +62,7 @@ private:
     static double findMin(double *d, int n);
     static void findMinMax(double *d, int n, double *min, double *max);
     static void plotDrawAxis(cv::Mat *img, int axis, int yzero=0);
-    static void plotDrawGrid(cv::Mat *img, int yzero, int msppx, int tstart);
+    static void plotDrawGrid(cv::Mat *img, int yzero, int msppx, int tstart, double min, double max);
 };
 
 
